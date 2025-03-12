@@ -65,10 +65,10 @@ def intersect_nx2(tensor_a, tensor_b):
     set_a = set(map(tuple, tensor_a.tolist()))
     set_b = set(map(tuple, tensor_b.tolist()))
 
-    # 求交集
+    # intersect
     intersection_set = set_a.intersection(set_b)
 
-    # 将交集转换回张量
+
     intersection_tensor = torch.tensor(list(intersection_set))
 
     return intersection_tensor
