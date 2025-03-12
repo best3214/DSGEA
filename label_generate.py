@@ -1,17 +1,16 @@
-import math
-import os
 import torch
 import numpy as np
 from conf import parse_args
 import os
 from tqdm import trange, tqdm
 
-from utils import generate_other_entities, generate_topk_sim_dict, generate_most_sim_pair, intersect_nx2
+from utils import generate_other_entities, intersect_nx2
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 args = parse_args()
 
+# Optimal Selection Strategy
 def enhance_latent_labels_with_OSS(x1, x2, improved_candi_probs: torch.Tensor,
                                                          improved_candi_probs_inv: torch.Tensor, data, ratio=0):
     print('enhance_latent_labels_with_OSS')
@@ -23,24 +22,24 @@ def enhance_latent_labels_with_OSS(x1, x2, improved_candi_probs: torch.Tensor,
 
 
     with torch.no_grad():
-        pair_num = data.test_set.size(0)
 
         dis_mtx = torch.cdist(x1, x2)
         dis_mtx_inv = dis_mtx.t()
 
+        # get all entities in KG1 and KG2
         all_entities1 = torch.arange(improved_candi_probs.shape[0]).to(device)
         all_entities2 = torch.arange(improved_candi_probs.shape[1]).to(device)
 
+        # unlabeled entities in KG1 and KG2
         other_entities1 = generate_other_entities(all_entities1, data.train_set[:, 0])
         other_entities2 = generate_other_entities(all_entities2, data.train_set[:, 1])
 
         new_alignment_dict1 = {}
         new_alignment_dict2 = {}
 
+        # core: Selecting Optimal Candidate Entity Pairs with Dual Strategies
         for ent1, ent2 in tqdm(data.temp_set.cpu().numpy(), ascii=True, desc="Generating new alignment labels"):
-            # print("ent1, ent2:", ent1, ent2)
             if ent1 in data.neigh1 and ent2 in data.neigh2:
-                # print(ent1)
                 neighbors1 = np.array(data.neigh1[ent1])
                 neighbors2 = np.array(data.neigh2[ent2])
                 neighbors1 = np.intersect1d(neighbors1, other_entities1.numpy())
@@ -75,11 +74,9 @@ def enhance_latent_labels_with_OSS(x1, x2, improved_candi_probs: torch.Tensor,
                         prob_inv = prob_inv.cpu().item()
                         tmp_idx_inv = tmp_idx_inv.cpu().item()
 
-                        # if num == tmp_idx_inv:
                         if num == tmp_idx_inv and num == tmp_idx_dis_inv:
                             if prob > ratio and prob_inv > ratio:
                                 if neighbors1[num] not in new_alignment_dict1 and neighbors2[tmp_idx] not in new_alignment_dict2:
-                                # if neighbors1[num] not in new_alignment_dict1 and neighbors2[tmp_idx] not in new_alignment_dict2 and neighbors1[num] in topk_dict2[neighbors2[tmp_idx]] and neighbors2[tmp_idx] in topk_dict1[neighbors1[num]]:
                                     new_alignment_dict1[neighbors1[num]] = prob
                                     new_alignment_dict2[neighbors2[tmp_idx]] = prob_inv
                                 elif neighbors1[num] in new_alignment_dict1:
@@ -98,6 +95,7 @@ def enhance_latent_labels_with_OSS(x1, x2, improved_candi_probs: torch.Tensor,
                                     continue
 
                                 new_alignment.append([neighbors1[num], neighbors2[tmp_idx]])
+        # update new_set
         if data.new_set.shape[0] > 0:
             data.new_set = intersect_nx2(data.new_set.cpu(), torch.tensor(new_alignment)).to(data.train_set.device)
         else:
@@ -105,6 +103,7 @@ def enhance_latent_labels_with_OSS(x1, x2, improved_candi_probs: torch.Tensor,
         for i in data.train_set.cpu().numpy():
             new_alignment.append(i)
 
+    # Calculate the Accuracy of Candidate Entity Pairs
     for ent1, ent2 in data.train_set.cpu().numpy():
         if ent1 == ent2:
             ptrue += 1
@@ -117,36 +116,35 @@ def enhance_latent_labels_with_OSS(x1, x2, improved_candi_probs: torch.Tensor,
         pacc = ptrue / (ptrue + pfalse)
     print("new labels num:", ptrue + pfalse)
     print("joint distr threshold & mutual nearest acc", pacc)
+
+# DAA -- Deferred Acceptance Algorithm
 def enhance_latent_labels_with_DAA(x1, x2, improved_candi_probs: torch.Tensor,
                                                          improved_candi_probs_inv: torch.Tensor, data, ratio=0):
     print('enhance_latent_labels_with_DAA')
     device = improved_candi_probs.device
-    train_alignment = data.train_set.cpu().numpy()
-    test_alignment = data.test_set.cpu().numpy()
 
-
-    # ratio = ratio
-    print('ratio', ratio)
     ptrue = 0
     pfalse = 0
 
     new_alignment = []
     with torch.no_grad():
-        pair_num = data.test_set.size(0)
 
+        # embedding distance
         dis_mtx = torch.cdist(x1, x2)
         dis_mtx_inv = dis_mtx.t()
 
+        # get all entities in KG1 and KG2
         all_entities1 = torch.arange(improved_candi_probs.shape[0]).to(device)
         all_entities2 = torch.arange(improved_candi_probs.shape[1]).to(device)
 
+        # unlabeled entities in KG1 and KG2
         other_entities1 = generate_other_entities(all_entities1, data.train_set[:, 0])
         other_entities2 = generate_other_entities(all_entities2, data.train_set[:, 1])
 
         new_alignment_dict1 = {}
         new_alignment_dict2 = {}
 
-
+        # core: Selecting One-to-One Candidate Pairs with Dual Strategies using DAA
         for ent1, ent2 in tqdm(data.temp_set.cpu().numpy(), ascii=True, desc="Generating new alignment labels"):
             if ent1 in data.neigh1 and ent2 in data.neigh2:
                 neighbors1 = np.array(data.neigh1[ent1])
@@ -210,6 +208,8 @@ def enhance_latent_labels_with_DAA(x1, x2, improved_candi_probs: torch.Tensor,
                             else:
                                 continue
                             new_alignment.append([neighbors1[i], neighbors2[aligned_dis_e1[i]]])
+
+        # update new_set
         if data.new_set.shape[0] > 0:
             data.new_set = intersect_nx2(data.new_set.cpu(), torch.tensor(new_alignment)).to(data.train_set.device)
         else:
@@ -217,8 +217,7 @@ def enhance_latent_labels_with_DAA(x1, x2, improved_candi_probs: torch.Tensor,
         for i in data.train_set.cpu().numpy():
             new_alignment.append(i)
 
-    p_set = torch.tensor(new_alignment, device=data.train_set.device)
-
+    # Calculate the Accuracy of Candidate Entity Pairs
     for ent1, ent2 in data.train_set.cpu().numpy():
         if ent1 == ent2:
             ptrue += 1
@@ -233,46 +232,6 @@ def enhance_latent_labels_with_DAA(x1, x2, improved_candi_probs: torch.Tensor,
     print("joint distr threshold & mutual nearest acc", pacc)
 
 
-def generate_labels(x1, x2, data):
-    pair = data.test_set
-    device = pair.device
-
-    all_entities1 = torch.arange(x1.shape[0]).to(device)
-    all_entities2 = torch.arange(x2.shape[0]).to(device)
-
-    other_entities1 = generate_other_entities(all_entities1, data.train_set[:, 0])
-    other_entities2 = generate_other_entities(all_entities2, data.train_set[:, 1])
-    print("other_entities1.shape, other_entities2.shape:", other_entities1.shape, other_entities2.shape)
-
-    num1 = other_entities1.shape[0]
-    num2 = other_entities2.shape[0]
-
-    # pair_num = pair.size(0)
-    # S = -torch.cdist(x1[pair[:, 0]], x2[pair[:, 1]], p=1).cpu()
-    S = -torch.cdist(x1[other_entities1], x2[other_entities2], p=1).cpu()
-    # index = S.flatten().argsort(descending=True)
-    index = (S.softmax(1) + S.softmax(0)).flatten().argsort(descending=True)
-    index_e1 = index // num2
-    index_e2 = index % num2
-    aligned_e1 = torch.zeros(num1, dtype=torch.bool)
-    aligned_e2 = torch.zeros(num2, dtype=torch.bool)
-    true_aligned = 0
-    num = 0
-    for _ in range(num1*5):
-        if aligned_e1[index_e1[_]] or aligned_e2[index_e2[_]]:
-            continue
-        if other_entities1[index_e1[_]] == other_entities2[index_e2[_]]:
-            true_aligned += 1
-            # print(other_entities1[index_e1[_]], other_entities2[index_e2[_]])
-        aligned_e1[index_e1[_]] = True
-        aligned_e2[index_e2[_]] = True
-        # data.train_set.append([index_e1[_], index_e2[_]])
-        new_element = torch.tensor([other_entities1[index_e1[_]], other_entities2[index_e2[_]]])
-        num += 1
-
-        # 使用torch.cat将新元素添加到data.train_set
-        data.train_set = torch.cat((data.train_set, new_element.unsqueeze(0).to(device)), dim=0)
-    print('Both:\tHits@Stable: %.2f%%    ' % (true_aligned / num * 100))
 
 
 
