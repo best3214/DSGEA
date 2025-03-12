@@ -61,7 +61,7 @@ def generate_other_entities(all_entities, part_entities):
 
 # compute the intersection of two set
 def intersect_nx2(tensor_a, tensor_b):
-    # 将两个张量转换为集合
+   
     set_a = set(map(tuple, tensor_a.tolist()))
     set_b = set(map(tuple, tensor_b.tolist()))
 
