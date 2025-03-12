@@ -64,6 +64,7 @@ scikit-learn
 ```
 The installation command for Apex is:
 ```
+git clone https://www.github.com/nvidia/apex
 cd apex
 python setup.py install --user
 ```
